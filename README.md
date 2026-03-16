@@ -2,7 +2,7 @@
 
 ## TypeScript connectivity analyzer
 
-Скрипт `analyze_ts_connectivity.py` проходит по `.ts`-файлам и строит диаграмму `.drawio`.
+Добавлен скрипт `analyze_ts_connectivity.py`, который проходит по всем `.ts`-файлам в проекте и строит диаграмму `.drawio`.
 
 ### Что анализируется для каждого `.ts` файла
 - имя файла (относительный путь)
@@ -20,19 +20,9 @@
 - Размер блока увеличивается с количеством входящих стрелок.
 - Минимальный размер блока всегда достаточен для отображения текста.
 
-### Как выбирается корень сканирования
-- По умолчанию скрипт использует корень git-репозитория (или папку скрипта, если git недоступен).
-- Если в выбранном корне не найдено `.ts`-файлов, скрипт автоматически ищет подпроекты с `angular.json` и сканирует их.
-
 ### Запуск
 ```bash
-python3 analyze_ts_connectivity.py --output ts-connectivity.drawio
-```
-
-Или явно указать корень проекта:
-
-```bash
-python3 analyze_ts_connectivity.py --root /path/to/angular-project --output ts-connectivity.drawio
+python3 analyze_ts_connectivity.py --root . --output ts-connectivity.drawio
 ```
 
 После запуска будет создан файл `ts-connectivity.drawio`, который можно открыть в [draw.io / diagrams.net](https://app.diagrams.net/).
