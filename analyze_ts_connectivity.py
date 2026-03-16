@@ -272,7 +272,11 @@ def build_diagram(files: List[FileInfo], edges: Set[Tuple[str, str]], out: Path)
         )
 
         nodes_xml.append(
+<<<<<<< codex/create-typescript/python-script-for-code-connectivity-analys-ku6tcy
             f'<mxCell id="{node_ids[f.rel_path]}" value="{value}" style="{style}" vertex="1" parent="1">'
+=======
+            f'<mxCell id="{node_id}" value="{value}" style="{style}" vertex="1" parent="1">'
+>>>>>>> main
             f'<mxGeometry x="{x}" y="{y}" width="{width}" height="{height}" as="geometry"/>'
             "</mxCell>"
         )
