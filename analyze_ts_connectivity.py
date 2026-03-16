@@ -17,7 +17,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
@@ -140,14 +142,12 @@ def parse_file(path: Path, root: Path) -> FileInfo:
             raw = raw.strip()
             if not raw:
                 continue
-            # export { A as B } -> exported element is B, but it still comes from local A
             parts = [p.strip() for p in raw.split(" as ")]
             local_name = parts[0]
             if local_name:
                 info.exports.add(local_name)
 
     for body, _mod in EXPORT_FROM_RE.findall(cleaned):
-        # re-export from another module counts as exported elements in this file
         for raw in body.split(","):
             raw = raw.strip()
             if not raw:
@@ -159,9 +159,7 @@ def parse_file(path: Path, root: Path) -> FileInfo:
     for clause, module in IMPORT_RE.findall(cleaned):
         info.imports.append(parse_import_clause(clause, module))
 
-    # Side-effect imports are parsed but contribute 0 imported elements.
     for module in SIDE_EFFECT_IMPORT_RE.findall(cleaned):
-        # avoid double counting regular imports
         if any(imp.module == module for imp in info.imports):
             continue
         info.imports.append(ImportInfo(module=module))
@@ -202,20 +200,20 @@ def text_size(lines: List[str]) -> Tuple[int, int]:
 
 
 def build_diagram(files: List[FileInfo], edges: Set[Tuple[str, str]], out: Path) -> None:
-    file_map = {f.rel_path: f for f in files}
     incoming: Dict[str, int] = {f.rel_path: 0 for f in files}
     for _src, dst in edges:
         incoming[dst] += 1
 
-    # Grid layout with mild growth by incoming edges.
-    cols = max(1, math.ceil(math.sqrt(len(files) or 1)))
+    sorted_files = sorted(files, key=lambda x: x.rel_path)
+    cols = max(1, math.ceil(math.sqrt(len(sorted_files) or 1)))
     x_gap, y_gap = 80, 80
     x0, y0 = 40, 40
 
     nodes_xml = []
     node_ids: Dict[str, str] = {}
+    dimensions: Dict[str, Tuple[int, int]] = {}
 
-    for idx, f in enumerate(sorted(files, key=lambda x: x.rel_path)):
+    for idx, f in enumerate(sorted_files):
         node_id = f"n{idx + 1}"
         node_ids[f.rel_path] = node_id
         line_items = [
@@ -228,12 +226,44 @@ def build_diagram(files: List[FileInfo], edges: Set[Tuple[str, str]], out: Path)
         scale = incoming[f.rel_path]
         width = base_w + scale * 10
         height = base_h + scale * 8
+        dimensions[f.rel_path] = (width, height)
 
+    col_widths = [0 for _ in range(cols)]
+    row_count = math.ceil(len(sorted_files) / cols)
+    row_heights = [0 for _ in range(row_count)]
+
+    for idx, f in enumerate(sorted_files):
         row = idx // cols
         col = idx % cols
-        x = x0 + col * (base_w + x_gap + 50)
-        y = y0 + row * (base_h + y_gap + 40)
+        width, height = dimensions[f.rel_path]
+        col_widths[col] = max(col_widths[col], width)
+        row_heights[row] = max(row_heights[row], height)
 
+    col_offsets = []
+    current_x = x0
+    for w in col_widths:
+        col_offsets.append(current_x)
+        current_x += w + x_gap
+
+    row_offsets = []
+    current_y = y0
+    for h in row_heights:
+        row_offsets.append(current_y)
+        current_y += h + y_gap
+
+    for idx, f in enumerate(sorted_files):
+        row = idx // cols
+        col = idx % cols
+        width, height = dimensions[f.rel_path]
+        x = col_offsets[col]
+        y = row_offsets[row]
+
+        line_items = [
+            f"{f.rel_path}",
+            f"exports: {len(f.exports) + (1 if f.has_default_export and 'default' not in f.exports else 0)}",
+            f"imports: {f.import_count}",
+            f"declared: {len(f.declarations)}",
+        ]
         value = escape("&#xa;".join(line_items))
         fill = color_for_key(f.rel_path)
         style = (
@@ -242,7 +272,11 @@ def build_diagram(files: List[FileInfo], edges: Set[Tuple[str, str]], out: Path)
         )
 
         nodes_xml.append(
+<<<<<<< codex/create-typescript/python-script-for-code-connectivity-analys-ku6tcy
+            f'<mxCell id="{node_ids[f.rel_path]}" value="{value}" style="{style}" vertex="1" parent="1">'
+=======
             f'<mxCell id="{node_id}" value="{value}" style="{style}" vertex="1" parent="1">'
+>>>>>>> main
             f'<mxGeometry x="{x}" y="{y}" width="{width}" height="{height}" as="geometry"/>'
             "</mxCell>"
         )
@@ -280,18 +314,64 @@ def build_diagram(files: List[FileInfo], edges: Set[Tuple[str, str]], out: Path)
     out.write_text(xml, encoding="utf-8")
 
 
+def discover_default_root() -> Path:
+    script_dir = Path(__file__).resolve().parent
+    try:
+        top = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=script_dir,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if top:
+            return Path(top)
+    except Exception:
+        pass
+    return script_dir
+
+
 def collect_files(root: Path) -> List[Path]:
-    files = [
-        p
-        for p in root.rglob("*.ts")
-        if p.is_file() and "node_modules" not in p.parts and ".git" not in p.parts
-    ]
-    return sorted(files)
+    excluded_dirs = {
+        ".git",
+        "node_modules",
+        "dist",
+        "coverage",
+        ".angular",
+        ".nx",
+        "tmp",
+        "temp",
+        "out",
+        "build",
+    }
+
+    found: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        dirnames[:] = [d for d in dirnames if d not in excluded_dirs]
+        for name in filenames:
+            lower = name.lower()
+            if lower.endswith(".ts") and not lower.endswith(".d.ts"):
+                found.append((Path(dirpath) / name).resolve())
+
+    return sorted(set(found))
+
+
+def find_angular_roots(search_root: Path) -> List[Path]:
+    matches: List[Path] = []
+    for candidate in search_root.glob("**/angular.json"):
+        if ".git" in candidate.parts or "node_modules" in candidate.parts:
+            continue
+        matches.append(candidate.parent.resolve())
+    return sorted(set(matches))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build draw.io diagram for TS connectivity")
-    parser.add_argument("--root", type=Path, default=Path("."), help="Project root directory")
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        help="Project root directory. Defaults to git root (or script directory).",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -300,8 +380,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    root = args.root.resolve()
+    root = (args.root.resolve() if args.root else discover_default_root())
     ts_paths = collect_files(root)
+
+    scan_roots = [root]
+    if not ts_paths:
+        angular_roots = find_angular_roots(root)
+        for angular_root in angular_roots:
+            for p in collect_files(angular_root):
+                ts_paths.append(p)
+        ts_paths = sorted(set(ts_paths))
+        if ts_paths:
+            scan_roots = sorted(set([root] + angular_roots))
 
     infos = [parse_file(p, root) for p in ts_paths]
     by_abs = {i.path.resolve(): i for i in infos}
@@ -332,10 +422,23 @@ def main() -> None:
             if matched and f.rel_path != target.rel_path:
                 edges.add((f.rel_path, target.rel_path))
 
-    build_diagram(infos, edges, args.output.resolve())
+    connected_paths: Set[str] = set()
+    for src, dst in edges:
+        connected_paths.add(src)
+        connected_paths.add(dst)
 
+    rendered_infos = [f for f in infos if f.rel_path in connected_paths]
+
+    build_diagram(rendered_infos, edges, args.output.resolve())
+
+    print(f"Scan root: {root}")
+    if len(scan_roots) > 1:
+        print("Fallback Angular roots:")
+        for r in scan_roots[1:]:
+            print(f"  - {r}")
     print(f"Analyzed {len(infos)} TypeScript files")
     print(f"Found {len(edges)} dependency edges")
+    print(f"Rendered {len(rendered_infos)} connected blocks")
     print(f"Wrote diagram: {args.output}")
 
 
